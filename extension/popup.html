@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; }
+  body { width: 430px; margin: 0; font-family: system-ui, -apple-system, sans-serif; font-size: 13px; color: #1f2937; background: #f3f4f6; }
+  .head { background: linear-gradient(135deg, #1e3a8a, #2563eb); color: #fff; padding: 12px 16px; }
+  .head .t { font-size: 15px; font-weight: 700; letter-spacing: .5px; }
+  .head .s { font-size: 11px; opacity: .85; margin-top: 2px; }
+  .body { padding: 12px; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+  .card h4 { margin: 0 0 8px; font-size: 12px; color: #6b7280; font-weight: 600; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  input[type=text], input[type=number], textarea { border: 1px solid #d1d5db; border-radius: 6px; padding: 7px 9px; font-size: 13px; outline: none; }
+  input:focus, textarea:focus { border-color: #2563eb; }
+  button.primary { flex: 1; background: #2563eb; color: #fff; border: 0; border-radius: 8px; padding: 9px 0; font-size: 13px; font-weight: 600; cursor: pointer; }
+  button.primary:disabled { background: #94a3b8; cursor: not-allowed; }
+  button.ghost { background: #fff; color: #374151; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  .status { font-size: 13px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; }
+  .status.probing { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
+  .status.success { border-color: #86efac; background: #f0fdf4; color: #15803d; font-weight: 600; }
+  .status.waiting { border-color: #fcd34d; background: #fffbeb; color: #b45309; }
+  .status.error, .status.maxed { border-color: #fca5a5; background: #fef2f2; color: #dc2626; }
+  .big { font-size: 20px; font-weight: 800; }
+  .big.ok { color: #15803d; }
+  .big.no { color: #b45309; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .chip { display: inline-block; padding: 2px 9px; border-radius: 12px; font-size: 11px; font-weight: 500; }
+  .chip.hit { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+  .chip.norm { background: #f3f4f6; color: #4b5563; border: 1px solid #e5e7eb; }
+  .sec { margin-top: 8px; }
+  .sec h4 { margin: 0 0 4px; font-size: 11px; color: #9ca3af; font-weight: 500; }
+  textarea { width: 100%; font-size: 11px; border: 1px solid #e5e7eb; border-radius: 6px; }
+  .copy { background: #e5e7eb; border: 0; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+  .err { color: #dc2626; font-size: 12px; margin-top: 6px; display: none; }
+  .history { max-height: 200px; overflow-y: auto; }
+  .h-item { border-top: 1px solid #f3f4f6; padding: 7px 0; }
+  .h-item:first-child { border-top: 0; }
+  .h-head { display: flex; align-items: center; gap: 8px; }
+  .h-head b { font-size: 12px; }
+  .h-time { font-size: 11px; color: #9ca3af; flex: 1; }
+  .h-count { font-size: 11px; font-weight: 700; color: #6b7280; background: #f3f4f6; border-radius: 10px; padding: 1px 8px; }
+  .h-count.ok { color: #15803d; background: #dcfce7; }
+  .empty { color: #9ca3af; font-size: 12px; text-align: center; padding: 10px 0; }
+  .setrow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .setrow label { width: 96px; font-size: 12px; color: #4b5563; flex-shrink: 0; }
+  .setrow input { flex: 1; width: 60px; }
+  .ding-box { background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+  .ding-box h4 { margin: 0 0 6px; font-size: 12px; color: #92400e; font-weight: 600; }
+  .ding-box input { width: 100%; margin-bottom: 5px; font-size: 12px; }
+  details summary { font-size: 12px; color: #6b7280; cursor: pointer; margin-bottom: 8px; }
+  .msg { font-size: 11px; color: #16a34a; margin-left: 6px; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="t">领星好仓库监控助手</div>
+    <div class="s">提交装箱 → 读取分仓 → 好仓达标提醒（永不真实申报）</div>
+  </div>
+  <div class="body">
+
+    <div class="card">
+      <h4>监控已有 STA</h4>
+      <div class="row">
+        <input type="text" id="taskId" placeholder="粘贴 localTaskId（纯数字）" style="flex:1">
+      </div>
+      <div class="row">
+        <button class="primary" id="monStart">开始监控</button>
+        <button class="ghost" id="monStop">停止</button>
+      </div>
+      <div class="status" id="monStatus">未在监控</div>
+      <div id="monResult" style="display:none; margin-top:10px">
+        <div class="big" id="monBig"></div>
+        <div class="chips" id="monChips"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h4>轮询历史（每轮分配与命中）</h4>
+      <div class="history" id="history"><div class="empty">暂无记录</div></div>
+      <details style="margin-top:8px">
+        <summary>原始日志</summary>
+        <textarea id="monLog" readonly style="height:120px;font-family:ui-monospace,monospace;margin-top:6px"></textarea>
+      </details>
+    </div>
+
+    <div class="card">
+      <h4>监控设置</h4>
+      <div class="setrow"><label>好仓达标阈值</label><input type="number" id="setThreshold" min="1"></div>
+      <div class="setrow"><label>最大轮询次数</label><input type="number" id="setMaxAttempts" min="1"></div>
+      <div class="setrow" style="align-items:flex-start">
+        <label style="padding-top:5px">好仓白名单<br><span id="whCount" style="color:#9ca3af"></span></label>
+        <textarea id="setWhitelist" rows="4" style="flex:1"></textarea>
+      </div>
+      <div class="row" style="margin-bottom:0">
+        <button class="ghost" id="saveSettings" style="flex:1">保存设置（下一轮生效）</button>
+        <span class="msg" id="setMsg"></span>
+      </div>
+    </div>
+
+    <div class="ding-box">
+      <h4>钉钉通知（达标时推送，可选）</h4>
+      <input type="text" id="dingWebhook" placeholder="钉钉群机器人 Webhook（含 access_token=）">
+      <input type="text" id="dingSecret" placeholder="加签密钥 SEC 开头（可选）">
+      <div class="row" style="margin:6px 0 0">
+        <button class="copy" id="dingSave">保存</button>
+        <button class="copy" id="dingTest">发测试消息</button>
+        <span id="dingStatus" style="font-size:11px;color:#6b7280;align-self:center"></span>
+      </div>
+    </div>
+
+    <details>
+      <summary>高级：自动创建 STA（上传Excel模式）</summary>
+      <div class="card" style="margin-top:8px">
+        <div class="row">
+          <label class="file-label" id="fileLabel" for="file" style="flex:1;border:1px dashed #94a3b8;border-radius:8px;padding:8px 10px;text-align:center;cursor:pointer">点击选择店铺 Excel（.xlsx）</label>
+          <input type="file" id="file" accept=".xlsx,.xls" style="display:none">
+        </div>
+        <div class="row">
+          <button class="primary" id="start" disabled>开 始</button>
+        </div>
+        <div class="err" id="err"></div>
+        <div class="status" id="steps">步骤进度将显示在这里</div>
+        <div id="result" style="display:none;margin-top:10px">
+          <div class="big" id="big"></div>
+          <div class="chips" id="chips"></div>
+          <div class="sec">
+            <h4>结果页原文（截取）</h4>
+            <textarea id="raw" readonly style="height:64px"></textarea>
+          </div>
+          <button class="copy" id="copy">复制结果与调试日志</button>
+        </div>
+      </div>
+    </details>
+
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
