@@ -30,8 +30,10 @@
 
   // ---------- 页面浮动条 ----------
   let bar = null, barText = null, barBtns = null;
-  // 紧凑浮动条：状态头部 + 可收起的实时日志区（全部操作日志实时滚动）
+  // 紧凑浮动条：已停用（侧边栏替代），保留函数避免调用点报错
+  const BAR_ENABLED = false;
   function ensureBar() {
+    if (!BAR_ENABLED) return;
     if (bar && document.body.contains(bar)) return;
     bar = document.createElement("div");
     bar.id = "__lx_sta_bar__";
@@ -78,6 +80,7 @@
   }
   function setBarStatus(text, color) {
     ensureBar();
+    if (!barText) return;
     barText.textContent = text;
     document.getElementById("__lx_bar_dot__").style.background = color || "#3b82f6";
   }
@@ -546,8 +549,12 @@
   // ---------- 第4步：提取物流中心编码（步骤③页面） ----------
   // 实测：编码以「中部RFD2」「东部MEM1」等形式出现在页面文本中
   function scanCodes() {
-    const t = (document.body.innerText || "").replace(/\s+/g, "");
+    const full = (document.body.innerText || "").replace(/\s+/g, "");
+    const idx = full.indexOf("入库配置选项");
+    // 只扫入库配置之后的文本：向导标题「创建STA」+步骤序号会被拼成 STA1 之类的假编码
+    const t = idx >= 0 ? full.slice(idx) : "";
     const set = new Set();
+    if (!t) return { codes: [], details: [] };
     (t.match(/\b[A-Z]{2,4}\d\b/g) || []).forEach(c => set.add(c));
     // 白名单中无数字的特殊码（IUSJ/IUSQ/IUSP）
     ["IUSJ", "IUSQ", "IUSP"].forEach(c => { if (t.includes(c)) set.add(c); });
