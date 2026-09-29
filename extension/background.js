@@ -122,6 +122,12 @@ async function dingtalkSend(title, text) {
   return { ok: false, reason: body.errmsg || JSON.stringify(body) };
 }
 
+// 图标点击打开侧边栏（控制面板常驻，不随页面跳转消失）
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  chrome.sidePanel.setOptions({ path: "popup.html" }).catch(() => {});
+});
+
 // 网络请求记录仪：运行期间记录领星 POST 请求（排查 sid 之类的参数问题）
 let reqLogging = false;
 chrome.webRequest.onBeforeRequest.addListener(
@@ -375,27 +381,43 @@ async function runProbeCycle(isFirst) {
   reqLogging = true;
 
   try {
-    // 优先复用当前打开的领星标签页（不跳新页面）
+    // 标签页选择：优先用户当前正在看的向导页（原地探测不跳转）
     let tabId = mon.tabId;
     let tabOk = false;
     if (tabId) {
       try { const t = await chrome.tabs.get(tabId); tabOk = !!t && !!t.url && t.url.includes("erp.lingxing.com"); } catch (e) { tabOk = false; }
     }
     if (!tabOk) {
-      const lxTabs = await chrome.tabs.query({ url: "https://erp.lingxing.com/*" });
-      if (lxTabs.length) {
-        tabId = lxTabs[0].id;
-        const needNav = !(tabId && (lxTabs[0].url || "").includes("localTaskId=" + mon.localTaskId));
-        dbg(`复用领星标签页 ${tabId}${needNav ? "，导航到目标 STA" : "（已在目标页面）"}`);
-        if (needNav) {
-          await chrome.tabs.update(tabId, { url: editUrl(mon.localTaskId), active: true });
-          await waitTabComplete(tabId);
-          await new Promise(r => setTimeout(r, 3000));
+      let cand = null, needNav = true;
+      // ① 当前激活的领星标签页
+      const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (active && active.url && active.url.includes("erp.lingxing.com")) {
+        cand = active;
+        const u = active.url;
+        const isWizard = u.includes("SendToAmazon") || u.includes("localTaskId=" + mon.localTaskId);
+        if (isWizard) {
+          needNav = false;
+          dbg("当前标签页就是 STA 向导页，原地探测不跳转");
         }
-      } else {
+      }
+      // ② 其他领星标签页里的向导页
+      if (!cand) {
+        const lxTabs = await chrome.tabs.query({ url: "https://erp.lingxing.com/*" });
+        for (const t of lxTabs) {
+          if ((t.url || "").includes("SendToAmazon")) { cand = t; needNav = false; break; }
+        }
+        if (!cand && lxTabs.length) cand = lxTabs[0];
+      }
+      // ③ 都没有才新开
+      if (!cand) {
         dbg("未找到领星标签页，新开一个");
-        const t = await chrome.tabs.create({ url: editUrl(mon.localTaskId), active: true });
-        tabId = t.id;
+        cand = await chrome.tabs.create({ url: editUrl(mon.localTaskId), active: true });
+        needNav = false;
+      }
+      tabId = cand.id;
+      dbg(needNav ? "导航当前标签页到目标 STA" : "使用现有标签页");
+      if (needNav) {
+        await chrome.tabs.update(tabId, { url: editUrl(mon.localTaskId), active: true });
         await waitTabComplete(tabId);
         await new Promise(r => setTimeout(r, 3000));
       }
