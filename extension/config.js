@@ -1,7 +1,7 @@
 // 共享配置：好仓库白名单（内容脚本与后台/弹窗共用）
 // 注意：content_scripts 与 background(importScripts) / popup(<script>) 三处都会加载本文件
 var LX_CONFIG = {
-  threshold: 5,
+  threshold: 3,
   warehouses: [
     "ONT8", "LGB8", "SBD1", "LAX9",
     "POC1", "POC2", "POC3", "GYR2",

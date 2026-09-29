@@ -59,7 +59,15 @@ const SETTINGS_KEY = "lx_settings";
 
 async function getSettings() {
   const o = await chrome.storage.local.get(SETTINGS_KEY);
-  if (o[SETTINGS_KEY]) return o[SETTINGS_KEY];
+  if (o[SETTINGS_KEY]) {
+    const saved = o[SETTINGS_KEY];
+    if (!saved.migrated010) {  // v0.1.0：阈值默认回归 3，只迁移一次
+      saved.threshold = 3;
+      saved.migrated010 = true;
+      await chrome.storage.local.set({ [SETTINGS_KEY]: saved });
+    }
+    return saved;
+  }
   const def = { threshold: LX_CONFIG.threshold, maxAttempts: 100, warehouses: LX_CONFIG.warehouses };
   await chrome.storage.local.set({ [SETTINGS_KEY]: def });
   return def;
@@ -330,7 +338,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 const MON_KEY = "lx_monitor";
 const ALARM_NAME = "lx-sta-probe";
-const RETRY_MINUTES = 5; // 测试期 5 分钟，稳定后可调回 10
+const RETRY_MINUTES = 10;
 
 function editUrl(id) {
   return `https://erp.lingxing.com/erp/msupply/editSendToAmazon?localTaskId=${id}&regenerateShipment=false&openRestartDialog=false&positionType=1&next=0`;
