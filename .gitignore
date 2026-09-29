@@ -9,3 +9,7 @@ input/
 *.binarypb
 *.tmp
 node_modules/
+
+# tencent-docx pipeline intermediate artifacts
+manual-build/
+docs/manual-build/
