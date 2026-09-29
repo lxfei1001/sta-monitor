@@ -330,7 +330,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 const MON_KEY = "lx_monitor";
 const ALARM_NAME = "lx-sta-probe";
-const RETRY_MINUTES = 10;
+const RETRY_MINUTES = 5; // 测试期 5 分钟，稳定后可调回 10
 
 function editUrl(id) {
   return `https://erp.lingxing.com/erp/msupply/editSendToAmazon?localTaskId=${id}&regenerateShipment=false&openRestartDialog=false&positionType=1&next=0`;

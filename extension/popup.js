@@ -51,7 +51,7 @@ function maxHit(m) {
   const hs = (m.history || []).map(h => h.hitCount || 0);
   return Math.max(m.lastHitCount || 0, ...(hs.length ? hs : [0]));
 }
-const RETRY_HINT = "10 分钟后自动重摇";
+const RETRY_HINT = "5 分钟后自动重摇";
 
 function renderChips(box, details, hits, fallbackCodes) {
   const hitSet = new Set(hits || []);
