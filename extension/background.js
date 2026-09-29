@@ -177,7 +177,20 @@ function sendToTab(tabId, msg, timeoutMs = 240000) {
         if (!settled) { settled = true; resolve(res); }
       });
     };
-    attempt(5);
+    // 先探测内容脚本是否存活（插件刷新后旧页面脚本会失效）
+    chrome.tabs.sendMessage(tabId, { cmd: "PING" }, pong => {
+      if (chrome.runtime.lastError || !pong) {
+        // 死了：现场重新注入（config.js + content.js），免去用户刷新页面
+        dbg("内容脚本未响应，重新注入…");
+        chrome.scripting.executeScript({
+          target: { tabId },
+          files: ["config.js", "content.js"]
+        }).then(() => setTimeout(() => attempt(3), 800))
+          .catch(e => { if (!settled) { settled = true; reject(new Error("注入失败: " + e.message)); } });
+      } else {
+        attempt(0);
+      }
+    });
     setTimeout(() => { if (!settled) { settled = true; reject(new Error("content script 响应超时")); } }, timeoutMs);
   });
 }
