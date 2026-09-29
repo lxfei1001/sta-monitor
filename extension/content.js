@@ -617,6 +617,34 @@
   // ============ 监控模式：单次探测 ============
   // 铁律：只允许点击「上一步」「提交装箱并继续」「创建」「确认」，
   //       绝不点击「申报货件并提交配送服务」（那才会真实申报货件）
+  // 收集当前所有可见按钮文本（诊断用）
+  function dumpButtons() {
+    const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    return [...document.querySelectorAll("button")]
+      .filter(vis).map(b => (b.textContent || "").replace(/\s+/g, " ").trim())
+      .filter(t => t && t.length <= 15);
+  }
+
+  // 等待领星登录态恢复（登录页消失即视为已登录）
+  async function ensureLoggedIn() {
+    if (!/账号登录/.test(document.body.innerText || "")) return true;
+    dbg("检测到登录页，等待用户登录…");
+    setBar("领星登录已过期，请在页面登录（扫码/账密），登录后自动继续", true);
+    report("登录检测", "user", "等待登录…");
+    const t0 = Date.now();
+    while (Date.now() - t0 < 600000) {
+      if (stopRequested) return false;
+      if (userAction && userAction.type === "stop") { userAction = null; return false; }
+      if (!/账号登录/.test(document.body.innerText || "")) {
+        dbg("登录完成");
+        await sleep(4000); // 等登录后跳转渲染
+        return true;
+      }
+      await sleep(2000);
+    }
+    return false;
+  }
+
   async function runProbe(msg) {
     if (running) return { error: "已有任务在运行" };
     running = true; stopRequested = false; userAction = null;
@@ -626,24 +654,49 @@
       setBar(`监控探测中（${msg.isFirst ? "首次提交" : "重试"}）…`, true);
       dbg(`── 探测开始（${msg.isFirst ? "首次提交" : "重试"}）`);
 
-      // 非首次：先点「上一步」回到装箱步骤
-      if (!msg.isFirst) {
+      // 前置：登录态检查（未登录会导致找不到任何 STA 按钮）
+      if (!await ensureLoggedIn()) return { stopped: true };
+
+      // 判定是否需要先回上一步：
+      // 页面出现「申报货件并提交配送服务」= 当前在第③步（配送服务），
+      // 「提交装箱并继续」在第②步，必须先点上一步（铁律：那个申报按钮永远不点）
+      const hasFinalBtn = [...document.querySelectorAll("button")].some(b =>
+        (b.textContent || "").replace(/\s/g, "").includes("申报货件并提交配送服务") && b.getBoundingClientRect().width > 0);
+      const hasConfig = /入库配置选项/.test(document.body.innerText || "");
+      if (hasFinalBtn) dbg("检测到第③步（申报货件按钮在场），需先回上一步");
+
+      // 非首次 / 在第③步 / 页面残留配置：先点「上一步」回到装箱步骤
+      if (!msg.isFirst || hasFinalBtn || hasConfig) {
         const back = [...document.querySelectorAll("button")].find(b =>
           (b.textContent || "").replace(/\s/g, "") === "上一步" && b.getBoundingClientRect().width > 0);
         if (back) {
           back.click();
           dbg("已点击上一步");
           report("返回装箱步骤", "ok", "已点上一步");
-          await sleep(3000);
+          // 等「提交装箱并继续」出现（最长10秒），别固定傻等
+          let ready = false;
+          for (let t = 0; t < 10; t++) {
+            await sleep(1000);
+            if ([...document.querySelectorAll("button")].some(b =>
+              (b.textContent || "").replace(/\s/g, "").includes("提交装箱") && b.getBoundingClientRect().width > 0)) {
+              ready = true; break;
+            }
+          }
+          dbg(ready ? "已回到装箱步骤" : "上一步后未见提交按钮（继续尝试匹配）");
         } else {
           dbg("未找到「上一步」（可能已在装箱步骤）");
         }
       }
 
-      // 找提交按钮：优先「提交装箱并继续」，退而求「创建」
+      // 找提交按钮：精确匹配 → 模糊包含 → 「创建」
       let btn = [...document.querySelectorAll("button")].find(b =>
         (b.textContent || "").replace(/\s/g, "") === "提交装箱并继续" && b.getBoundingClientRect().width > 0);
       let used = "提交装箱并继续";
+      if (!btn) {
+        btn = [...document.querySelectorAll("button")].find(b =>
+          (b.textContent || "").replace(/\s/g, "").includes("提交装箱") && b.getBoundingClientRect().width > 0);
+        if (btn) used = (btn.textContent || "").replace(/\s+/g, " ").trim();
+      }
       if (!btn) {
         btn = [...document.querySelectorAll("button")].find(b =>
           (b.textContent || "").trim() === "创建" && b.getBoundingClientRect().width > 0);
@@ -654,8 +707,9 @@
         dbg("已点击 " + used);
         report("提交装箱", "doing", "已点击「" + used + "」");
       } else {
-        dbg("未找到提交按钮，转手动");
-        setBarWithButtons("未找到「提交装箱并继续」按钮，请手动点击后自动继续",
+        const btnTexts = dumpButtons();
+        dbg("未找到提交按钮，页面可见按钮: " + JSON.stringify(btnTexts));
+        setBarWithButtons("未找到提交按钮（页面按钮: " + btnTexts.slice(0, 5).join("、") + "），请手动点击后自动继续",
           [{ label: "我已点击", type: "ok", color: "#16a34a" }]);
         report("提交装箱", "user", "等待手动点击");
         const a = await waitUserAction(300000);
