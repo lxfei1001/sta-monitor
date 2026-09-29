@@ -119,3 +119,11 @@ else:
 `ONT8 LGB8 SBD1 LAX9 POC1 POC2 POC3 GYR2 GYR3 LAS1 VGT2 XLX7 PSP3 SMF3 SCK4 GEU2 GEU3 MIT2 SCK8 HLI2 IAZ1 PHX5 PHX7 SMF6 MCC1 TCY1 TCY2 IUSJ IUSQ IUSP`
 
 修改白名单或阈值：直接编辑 `config/warehouse_whitelist.json` 即可，无需改代码。
+
+---
+
+## 文档索引
+
+- `安装说明.md` — 用户安装与使用（插件目录下）
+- `DEVELOPMENT.md` — **开发文档**：项目架构、实现细节、消息协议、坑位与调试方法（后续优化必读）
+- `HANDOFF.md` — 换新电脑继续开发的迁移指引
