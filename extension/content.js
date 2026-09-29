@@ -541,14 +541,26 @@
     return { codes: [...set], details };
   }
 
-  async function extractCodes() {
+  async function extractCodes(nudge) {
     report("提取物流中心编码", "doing", "等待亚马逊返回仓库分配（最长90秒）…");
     let codes = [], details = [];
     const t0 = Date.now();
+    let nudged = false;
     while (Date.now() - t0 < 90000) {
       if (stopRequested) return { stopped: true };
       const r = scanCodes();
       if (r.codes.length) { codes = r.codes; details = r.details; break; }
+      // 有些任务提交装箱后不自动跳转，停在②步等「下一步」——20秒无编码就点它进第③步
+      if (nudge && !nudged && Date.now() - t0 > 20000) {
+        const next = [...document.querySelectorAll("button")].find(b =>
+          (b.textContent || "").replace(/\s/g, "") === "下一步" && b.getBoundingClientRect().width > 0);
+        if (next) {
+          next.click();
+          nudged = true;
+          dbg("20秒未见编码，已点「下一步」进入配送服务步骤");
+          report("提取物流中心编码", "doing", "已点下一步进入第③步…");
+        }
+      }
       await sleep(2000);
     }
     if (!codes.length) {
@@ -730,8 +742,8 @@
         }
       }
 
-      // 等待并提取仓库编码
-      const r = await extractCodes();
+      // 等待并提取仓库编码（监控模式允许自动点「下一步」）
+      const r = await extractCodes(true);
       r.elapsedSec = Math.round((Date.now() - t0) / 1000);
       r.trace = dbgRing.slice(traceStart);
       dbg(`── 探测完成，编码: ${(r.allCodes || []).join(",") || "无"}，耗时 ${r.elapsedSec}s`);
