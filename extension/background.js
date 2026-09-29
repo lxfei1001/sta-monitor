@@ -339,7 +339,13 @@ async function startMonitor(rawId) {
 async function stopMonitor() {
   chrome.alarms.clear(ALARM_NAME);
   const m = await getMonitor();
-  if (m) { m.active = false; m.status = "stopped"; await setMonitor(m); }
+  if (m) {
+    if (m.tabId) {
+      try { chrome.tabs.sendMessage(m.tabId, { cmd: "STOP_PROBE" }, () => void chrome.runtime.lastError); } catch (e) {}
+    }
+    m.active = false; m.status = "stopped";
+    await setMonitor(m);
+  }
 }
 
 chrome.alarms.onAlarm.addListener(al => {
@@ -369,17 +375,30 @@ async function runProbeCycle(isFirst) {
   reqLogging = true;
 
   try {
-    // 打开或复用标签页
+    // 优先复用当前打开的领星标签页（不跳新页面）
     let tabId = mon.tabId;
     let tabOk = false;
     if (tabId) {
-      try { const t = await chrome.tabs.get(tabId); tabOk = !!t; } catch (e) { tabOk = false; }
+      try { const t = await chrome.tabs.get(tabId); tabOk = !!t && !!t.url && t.url.includes("erp.lingxing.com"); } catch (e) { tabOk = false; }
     }
     if (!tabOk) {
-      const t = await chrome.tabs.create({ url: editUrl(mon.localTaskId), active: true });
-      tabId = t.id;
-      await waitTabComplete(tabId);
-      await new Promise(r => setTimeout(r, 3000));
+      const lxTabs = await chrome.tabs.query({ url: "https://erp.lingxing.com/*" });
+      if (lxTabs.length) {
+        tabId = lxTabs[0].id;
+        const needNav = !(tabId && (lxTabs[0].url || "").includes("localTaskId=" + mon.localTaskId));
+        dbg(`复用领星标签页 ${tabId}${needNav ? "，导航到目标 STA" : "（已在目标页面）"}`);
+        if (needNav) {
+          await chrome.tabs.update(tabId, { url: editUrl(mon.localTaskId), active: true });
+          await waitTabComplete(tabId);
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      } else {
+        dbg("未找到领星标签页，新开一个");
+        const t = await chrome.tabs.create({ url: editUrl(mon.localTaskId), active: true });
+        tabId = t.id;
+        await waitTabComplete(tabId);
+        await new Promise(r => setTimeout(r, 3000));
+      }
       mon.tabId = tabId;
       await setMonitor(mon);
     }

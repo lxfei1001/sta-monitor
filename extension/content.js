@@ -20,52 +20,74 @@
   // 调试日志环形缓冲：每次探测把完整 trace 返回给后台，写入监控日志
   const dbgRing = [];
   function dbg(line) {
-    dbgRing.push(`[${new Date().toLocaleTimeString()}] ${line}`);
+    const stamped = `[${new Date().toLocaleTimeString()}] ${line}`;
+    dbgRing.push(stamped);
     if (dbgRing.length > 300) dbgRing.shift();
     console.log("[好仓监控]", line);
+    barLog(line);
     try { chrome.runtime.sendMessage({ type: "DEBUG", line }); } catch (e) {}
   }
 
   // ---------- 页面浮动条 ----------
   let bar = null, barText = null, barBtns = null;
+  // 紧凑浮动条：状态头部 + 可收起的实时日志区（全部操作日志实时滚动）
   function ensureBar() {
     if (bar && document.body.contains(bar)) return;
     bar = document.createElement("div");
     bar.id = "__lx_sta_bar__";
-    bar.style.cssText = "position:fixed;top:12px;right:12px;z-index:2147483647;background:#1f2937;color:#fff;"
-      + "padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;max-width:340px;"
-      + "box-shadow:0 4px 16px rgba(0,0,0,.25);font-family:system-ui,sans-serif;";
+    bar.style.cssText = "position:fixed;top:10px;right:10px;z-index:2147483647;width:270px;"
+      + "background:rgba(17,24,39,.92);color:#f9fafb;border-radius:10px;overflow:hidden;"
+      + "box-shadow:0 4px 16px rgba(0,0,0,.3);font-family:system-ui,sans-serif;font-size:12px;";
+    const head = document.createElement("div");
+    head.style.cssText = "display:flex;align-items:center;gap:6px;padding:7px 10px;";
+    const dot = document.createElement("span");
+    dot.id = "__lx_bar_dot__";
+    dot.style.cssText = "width:8px;height:8px;border-radius:50%;background:#3b82f6;flex-shrink:0;";
     barText = document.createElement("div");
-    barBtns = document.createElement("div");
-    barBtns.style.cssText = "margin-top:6px;display:none;gap:8px;";
-    bar.appendChild(barText); bar.appendChild(barBtns);
+    barText.style.cssText = "flex:1;line-height:1.4;min-width:0;";
+    const minBtn = document.createElement("span");
+    minBtn.textContent = "—";
+    minBtn.title = "收起/展开日志";
+    minBtn.style.cssText = "cursor:pointer;color:#9ca3af;padding:0 4px;flex-shrink:0;";
+    minBtn.onclick = () => {
+      const body = document.getElementById("__lx_bar_body__");
+      if (body) body.style.display = body.style.display === "none" ? "block" : "none";
+    };
+    const stopBtn = document.createElement("span");
+    stopBtn.textContent = "停止";
+    stopBtn.title = "停止监控";
+    stopBtn.style.cssText = "cursor:pointer;color:#f87171;padding:0 4px;flex-shrink:0;font-weight:600;";
+    stopBtn.onclick = () => { stopRequested = true; userAction = { type: "stop" }; };
+    head.appendChild(dot); head.appendChild(barText); head.appendChild(minBtn); head.appendChild(stopBtn);
+    const logBody = document.createElement("div");
+    logBody.id = "__lx_bar_body__";
+    logBody.style.cssText = "max-height:120px;overflow-y:auto;padding:4px 10px 8px;"
+      + "font-family:ui-monospace,monospace;font-size:10.5px;line-height:1.5;color:#d1d5db;";
+    bar.appendChild(head); bar.appendChild(logBody);
     document.documentElement.appendChild(bar);
   }
-  function setBar(text, showStop = true) {
+  function barLog(line) {
     ensureBar();
-    barText.textContent = "【好仓监控】" + text;
-    barBtns.innerHTML = "";
-    barBtns.style.display = showStop ? "flex" : "none";
-    if (showStop) {
-      const stop = document.createElement("button");
-      stop.textContent = "停止";
-      stop.style.cssText = "flex:1;background:#ef4444;color:#fff;border:0;border-radius:6px;padding:4px 8px;cursor:pointer;";
-      stop.onclick = () => { userAction = { type: "stop" }; };
-      barBtns.appendChild(stop);
-    }
+    const body = document.getElementById("__lx_bar_body__");
+    if (!body) return;
+    const el = document.createElement("div");
+    el.textContent = line;
+    body.appendChild(el);
+    while (body.children.length > 40) body.removeChild(body.firstChild);
+    body.scrollTop = body.scrollHeight;
+  }
+  function setBarStatus(text, color) {
+    ensureBar();
+    barText.textContent = text;
+    document.getElementById("__lx_bar_dot__").style.background = color || "#3b82f6";
+  }
+  function setBar(text, showStop = true) {
+    setBarStatus("【好仓监控】" + text, showStop ? "#3b82f6" : "#22c55e");
   }
   function setBarWithButtons(text, buttons) {
-    ensureBar();
-    barText.textContent = "【好仓监控】" + text;
-    barBtns.innerHTML = "";
-    barBtns.style.display = "flex";
-    buttons.forEach(b => {
-      const el = document.createElement("button");
-      el.textContent = b.label;
-      el.style.cssText = "flex:1;background:" + (b.color || "#2563eb") + ";color:#fff;border:0;border-radius:6px;padding:4px 8px;cursor:pointer;";
-      el.onclick = () => { userAction = { type: b.type }; barBtns.style.display = "none"; };
-      barBtns.appendChild(el);
-    });
+    setBarStatus("【好仓监控】" + text, "#f59e0b");
+    // 兼容旧接口：按钮行为转由日志区顶部按钮 + 弹窗停止完成
+    buttons.forEach(b => { if (b.type === "stop") userAction = { type: "stop" }; });
   }
   function removeBar() { if (bar) bar.remove(); bar = null; }
 
@@ -623,6 +645,13 @@
       runProbe(msg).then(sendResponse);
       return true;
     }
+    if (msg.cmd === "STOP_PROBE") {
+      stopRequested = true;
+      userAction = { type: "stop" };
+      setBar("已停止", false);
+      sendResponse({ ok: true });
+      return true;
+    }
     if (msg.cmd === "PING") { sendResponse({ pong: true }); return true; }
   });
 
@@ -731,6 +760,7 @@
       // 处理中间确认弹窗（自动提交装箱数据等）
       for (let t = 0; t < 12; t++) {
         await sleep(1600);
+        if (stopRequested) return { stopped: true };
         if (/入库配置选项/.test(document.body.innerText || "")) break;
         const confirmBtn = [...document.querySelectorAll("button")].find(x =>
           (x.textContent || "").trim() === "确认" && x.getBoundingClientRect().width > 0);
