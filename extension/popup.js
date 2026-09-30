@@ -15,6 +15,29 @@ $("monStop").addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "STOP_MONITOR" });
 });
 
+// ==================== 自动读取当前领星页面的 localTaskId ====================
+// 触发时机：面板打开 / 切换标签页 / 领星页面跳转。只填空输入框或不覆盖手动输入的值。
+let autoFilledId = "";
+async function autoFillTaskId() {
+  try {
+    const tabs = await chrome.tabs.query({ url: "*://erp.lingxing.com/*" });
+    const active = tabs.find(t => t.active && /localTaskId=(\d+)/.test(t.url || ""));
+    const first = tabs.map(t => (t.url || "").match(/localTaskId=(\d+)/)).find(Boolean);
+    const id = active ? active.url.match(/localTaskId=(\d+)/)[1] : (first ? first[1] : "");
+    const input = $("taskId");
+    if (id && (!input.value.trim() || input.value.trim() === autoFilledId)) {
+      if (input.value.trim() !== id) {
+        input.value = id;
+        input.placeholder = "已自动读取页面任务 ID";
+      }
+      autoFilledId = id;
+    }
+  } catch (e) { /* 无领星标签页或权限异常时静默 */ }
+}
+autoFillTaskId();
+chrome.tabs.onActivated.addListener(autoFillTaskId);
+chrome.tabs.onUpdated.addListener((_tabId, info) => { if (info.url || info.status === "complete") autoFillTaskId(); });
+
 function renderMonStatus(text, cls) {
   $("monStatus").textContent = text;
   $("monStatus").className = "status " + (cls || "");

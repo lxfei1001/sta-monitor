@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "领星好仓库监控助手",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "监控领星STA入库配置：可编辑白名单/阈值/轮询上限，每轮结果历史展示，达标钉钉通知",
   "permissions": [
     "tabs",
