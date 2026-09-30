@@ -172,7 +172,7 @@ function waitTabComplete(tabId, timeoutMs = 30000) {
 }
 
 // 给内容脚本发消息（带重试，SPA 脚本可能尚未就绪）
-function sendToTab(tabId, msg, timeoutMs = 240000) {
+function sendToTab(tabId, msg, timeoutMs = 360000) {
   return new Promise((resolve, reject) => {
     let settled = false;
     const attempt = (left) => {

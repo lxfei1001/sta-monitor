@@ -737,23 +737,45 @@
       }
 
       // 找提交按钮：精确匹配 → 模糊包含 → 「创建」
-      let btn = [...document.querySelectorAll("button")].find(b =>
-        (b.textContent || "").replace(/\s/g, "") === "提交装箱并继续" && b.getBoundingClientRect().width > 0);
-      let used = "提交装箱并继续";
-      if (!btn) {
-        btn = [...document.querySelectorAll("button")].find(b =>
-          (b.textContent || "").replace(/\s/g, "").includes("提交装箱") && b.getBoundingClientRect().width > 0);
-        if (btn) used = (btn.textContent || "").replace(/\s+/g, " ").trim();
+      // 找不到时的恢复顺序：点「编辑」（拆分确认页，里面通常有提交装箱）→ 点「上一步」（回装箱步骤）→ 等人工
+      const findSubmit = () => {
+        let b = [...document.querySelectorAll("button")].find(x =>
+          (x.textContent || "").replace(/\s/g, "") === "提交装箱并继续" && x.getBoundingClientRect().width > 0);
+        if (b) return { btn: b, used: "提交装箱并继续" };
+        b = [...document.querySelectorAll("button")].find(x =>
+          (x.textContent || "").replace(/\s/g, "").includes("提交装箱") && x.getBoundingClientRect().width > 0);
+        if (b) return { btn: b, used: (b.textContent || "").replace(/\s+/g, " ").trim() };
+        b = [...document.querySelectorAll("button")].find(x =>
+          (x.textContent || "").trim() === "创建" && x.getBoundingClientRect().width > 0);
+        return b ? { btn: b, used: "创建" } : null;
+      };
+      let pick = findSubmit();
+      if (!pick) {
+        // 拆分确认页（货件1/货件2 待申报，只有 编辑/上一步）：点「编辑」进去找提交装箱
+        const editBtn = [...document.querySelectorAll("button")].find(x =>
+          (x.textContent || "").trim() === "编辑" && x.getBoundingClientRect().width > 0);
+        if (editBtn) {
+          editBtn.click();
+          dbg("未找到提交按钮，检测到「编辑」（拆分确认页），已点击进入");
+          report("提交装箱", "doing", "已点「编辑」进入拆分确认页");
+          for (let t = 0; t < 15 && !pick; t++) { await sleep(1000); pick = findSubmit(); }
+        }
       }
-      if (!btn) {
-        btn = [...document.querySelectorAll("button")].find(b =>
-          (b.textContent || "").trim() === "创建" && b.getBoundingClientRect().width > 0);
-        used = "创建";
+      if (!pick) {
+        // 兜底：有「上一步」就点，回装箱步骤再找
+        const backBtn = [...document.querySelectorAll("button")].find(x =>
+          (x.textContent || "").replace(/\s/g, "") === "上一步" && x.getBoundingClientRect().width > 0);
+        if (backBtn) {
+          backBtn.click();
+          dbg("仍未找到提交按钮，已点击「上一步」探查");
+          report("返回装箱步骤", "doing", "已点上一步探查");
+          for (let t = 0; t < 10 && !pick; t++) { await sleep(1000); pick = findSubmit(); }
+        }
       }
-      if (btn) {
-        btn.click();
-        dbg("已点击 " + used);
-        report("提交装箱", "doing", "已点击「" + used + "」");
+      if (pick) {
+        pick.btn.click();
+        dbg("已点击 " + pick.used);
+        report("提交装箱", "doing", "已点击「" + pick.used + "」");
       } else {
         const btnTexts = dumpButtons();
         dbg("未找到提交按钮，页面可见按钮: " + JSON.stringify(btnTexts));
