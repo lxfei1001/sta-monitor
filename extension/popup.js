@@ -2,6 +2,9 @@
 const $ = id => document.getElementById(id);
 let pickedFile = null;
 
+// 版本自证：排查「改了没生效」时，一眼看出加载的是哪个版本
+try { $("ver").textContent = "v" + chrome.runtime.getManifest().version; } catch (e) {}
+
 // ==================== 监控已有 STA ====================
 $("monStart").addEventListener("click", () => {
   const id = $("taskId").value.trim();
@@ -43,19 +46,26 @@ function renderMonStatus(text, cls) {
   $("monStatus").className = "status " + (cls || "");
 }
 
+let curMonitor = null;   // 供倒计时定时刷新用
+let curSettings = { retryMin: 10, retryMax: 20 };
+
 function renderMonitor(m) {
   if (!m) { renderMonStatus("未在监控"); return; }
+  curMonitor = m;
   const map = {
     starting: ["🚀 启动中，正在打开 STA 页面…", ""],
     probing: [`🔄 第 ${m.attempts} 次探测进行中…`, "probing"],
-    waiting: [`⏳ 已探测 ${m.attempts} 次，最高命中 ${maxHit(m)} 个，${RETRY_HINT}`, "waiting"],
+    waiting: [`⏳ 已探测 ${m.attempts} 次，最高命中 ${maxHit(m)} 个，${retryHint(m)}`, "waiting"],
     success: [`🎯 达标！命中 ${m.lastHitCount} 个好仓，已停止重试`, "success"],
     maxed: [`已达最大轮询次数（${m.attempts} 次），停止监控`, "maxed"],
     stopped: ["⏹ 已手动停止", ""],
-    error: [`⚠️ 出错（将自动重试）：${m.lastError || ""}`, "error"]
+    error: [m.active === false
+      ? `⛔ 已停止：${m.lastError || ""}`
+      : `⚠️ 出错（将自动重试）：${m.lastError || ""}`, "error"]
   };
   const [text, cls] = map[m.status] || [m.status, ""];
   renderMonStatus(`STA ${m.localTaskId} ｜ ${text}`, cls);
+  renderNextProbe(m);
 
   if (m.status === "success" || m.lastCodes) {
     $("monResult").style.display = "block";
@@ -65,6 +75,12 @@ function renderMonitor(m) {
       : `最近一轮命中 ${m.lastHitCount || 0} 个好仓`;
     $("monBig").className = "big " + (pass ? "ok" : "no");
     renderChips($("monChips"), m.lastDetails || [], m.lastHits || [], m.lastCodes || []);
+  } else {
+    // 新一轮刚开始（还没有任何结果）：必须把上一轮的结果清掉，
+    // 否则旧数据会一直挂在面板上，看起来像"这一轮跑出了结果"
+    $("monResult").style.display = "none";
+    $("monBig").textContent = "";
+    $("monChips").innerHTML = "";
   }
   $("monLog").value = (m.log || []).join("\n");
   renderHistory(m.history || []);
@@ -74,7 +90,49 @@ function maxHit(m) {
   const hs = (m.history || []).map(h => h.hitCount || 0);
   return Math.max(m.lastHitCount || 0, ...(hs.length ? hs : [0]));
 }
-const RETRY_HINT = "10 分钟后自动重摇";
+
+// 下一次重摇的倒计时（间隔为随机值，只能按排定时间回算）
+function retryHint(m) {
+  const at = m.nextProbeAt || 0;
+  if (!at) return "稍后自动重摇";
+  const left = Math.round((at - Date.now()) / 60000);
+  if (left <= 0) return "即将重摇…";
+  return `约 ${left} 分钟后重摇`;
+}
+
+// 预计下一次触发轮询的具体时间（绝对时刻 + 剩余分钟 + 随机区间）
+// 同时把「本轮实际探测的页面任务 ID」亮出来，串台时立刻可见
+function renderNextProbe(m) {
+  const box = $("monNext");
+  const at = m.nextProbeAt || 0;
+  const showNext = !!at && (m.status === "waiting" || m.status === "error");
+  const probed = m.probedTaskId || "";
+  const mismatch = !!probed && String(probed) !== String(m.localTaskId);
+  if (!showNext && !mismatch) { box.style.display = "none"; return; }
+  box.style.display = "block";
+
+  let html = "";
+  if (showNext) {
+    const time = new Date(at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    const leftMs = at - Date.now();
+    const range = (m.retryRange && m.retryRange.length === 2)
+      ? `${m.retryRange[0]}–${m.retryRange[1]} 分钟随机`
+      : `${curSettings.retryMin || 10}–${curSettings.retryMax || 20} 分钟随机`;
+    const left = leftMs <= 0
+      ? "即将触发"
+      : leftMs < 60000 ? "不到 1 分钟后" : `约 ${Math.round(leftMs / 60000)} 分钟后`;
+    html += `<div>🕒 下次轮询：${time}（${left}，${range}）</div>`;
+  }
+  if (mismatch) {
+    html += `<div style="color:#dc2626;font-weight:600">⚠️ 本轮页面任务 ${probed} ≠ 监控任务 ${m.localTaskId}</div>`;
+  }
+  box.innerHTML = html;
+}
+
+// 等待期间每 30 秒刷新一次倒计时
+setInterval(() => {
+  if (curMonitor && curMonitor.status === "waiting") renderMonitor(curMonitor);
+}, 30000);
 
 function renderChips(box, details, hits, fallbackCodes) {
   const hitSet = new Set(hits || []);
@@ -106,8 +164,11 @@ function renderHistory(history) {
 
 // ==================== 监控设置 ====================
 function renderSettings(s) {
+  curSettings = s;
   $("setThreshold").value = s.threshold;
   $("setMaxAttempts").value = s.maxAttempts;
+  $("setRetryMin").value = s.retryMin || 10;
+  $("setRetryMax").value = s.retryMax || 20;
   $("setWhitelist").value = (s.warehouses || []).join(", ");
   $("whCount").textContent = `当前 ${(s.warehouses || []).length} 个`;
 }
@@ -117,10 +178,20 @@ $("saveSettings").addEventListener("click", () => {
   const threshold = parseInt($("setThreshold").value, 10) || 5;
   const maxAttempts = parseInt($("setMaxAttempts").value, 10) || 100;
   if (!warehouses.length) { $("setMsg").textContent = "白名单不能为空"; $("setMsg").style.color = "#dc2626"; return; }
-  chrome.runtime.sendMessage({ type: "SAVE_SETTINGS", settings: { threshold, maxAttempts, warehouses } }, () => {
-    renderSettings({ threshold, maxAttempts, warehouses });
-    $("setMsg").textContent = "已保存 ✓";
-    setTimeout(() => { $("setMsg").textContent = ""; }, 2000);
+
+  let retryMin = parseInt($("setRetryMin").value, 10);
+  let retryMax = parseInt($("setRetryMax").value, 10);
+  if (!retryMin || retryMin < 1) retryMin = 10;
+  if (!retryMax || retryMax < 1) retryMax = 20;
+  if (retryMax < retryMin) { const t = retryMin; retryMin = retryMax; retryMax = t; }
+
+  const settings = { threshold, maxAttempts, warehouses, retryMin, retryMax };
+  chrome.runtime.sendMessage({ type: "SAVE_SETTINGS", settings }, res => {
+    renderSettings((res && res.settings) || settings);
+    $("setMsg").textContent = retryMin === retryMax
+      ? `已保存 ✓（固定 ${retryMin} 分钟）`
+      : `已保存 ✓（${retryMin}–${retryMax} 分钟随机）`;
+    setTimeout(() => { $("setMsg").textContent = ""; }, 2500);
   });
 });
 

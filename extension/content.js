@@ -7,7 +7,8 @@
   const CFG = window.LX_CONFIG || {
     warehouses: [], threshold: 3,
     extraCodePattern: "\\b[A-Z]{4}\\b",
-    staUrl: "https://erp.lingxing.com/erp/msupply/AddSendToAmazon"
+    staUrl: "https://erp.lingxing.com/erp/msupply/AddSendToAmazon",
+    jitterMs: { beforeProbe: [3000, 15000], beforeClick: [1000, 5000], pollConfirm: [1200, 2600], beforeNext: [800, 3000] }
   };
 
   let running = false;
@@ -96,6 +97,19 @@
 
   // ---------- 工具函数 ----------
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  // 拟人化随机停顿：风控不只盯「多久轮询一次」，动作节奏每次完全一致同样可疑。
+  // 每次点击前在 [lo, hi] 毫秒内随机等一下，并把实际停顿写进 trace 便于复盘。
+  // range 取自 config.js 的 jitterMs，缺失时用 fallback。
+  function jitter(range, label) {
+    const r = Array.isArray(range) ? range : [];
+    const lo = Number(r[0]) || 0;
+    const hi = Number(r[1]) || lo;
+    const ms = Math.round(lo + Math.random() * Math.max(0, hi - lo));
+    if (label) dbg(`${label}：随机停顿 ${(ms / 1000).toFixed(1)}s（拟人节奏）`);
+    return sleep(ms);
+  }
+  const J = key => (CFG.jitterMs && CFG.jitterMs[key]) || null;
 
   async function waitUserAction(timeoutMs) {
     const t0 = Date.now();
@@ -584,6 +598,7 @@
         const next = [...document.querySelectorAll("button")].find(b =>
           (b.textContent || "").replace(/\s/g, "") === "下一步" && b.getBoundingClientRect().width > 0);
         if (next) {
+          await jitter(J("beforeNext") || [800, 3000], "点「下一步」前");
           next.click();
           nudged = true;
           dbg("20秒未见编码，已点「下一步」进入配送服务步骤");
@@ -693,6 +708,25 @@
     return false;
   }
 
+  // 任务可用性自检：返回字符串 = 原因（任务不存在/无权限/页面不对），null = 正常
+  // strict=true 时额外判定「页面压根不是 STA 向导页」（用于连提交按钮都找不到的场景）
+  // 注意两条红线：
+  //  ① 提示词只收「明确指向任务无效」的，不收「操作失败/加载失败」这类常规 toast，
+  //     否则正常重摇失败一次就会把整场监控错停
+  //  ② 向导页判定词只选 STA 向导特有的，不能用「货件」这种全局导航里就有的字样
+  function detectInvalidTask(strict) {
+    const raw = document.body.innerText || "";
+    const txt = raw.replace(/\s+/g, "");
+    const hit = txt.match(/任务不存在|数据不存在|货件不存在|记录不存在|页面不存在|已被删除|无权限|没有权限|无权访问|参数错误/);
+    if (hit) return `任务不可用：页面提示「${hit[0]}」，请核对 localTaskId 是否正确 / 是否已被删除`;
+    if (!strict) return null;
+    const hasWizard = /入库配置|提交装箱|创建STA|编辑STA|SendToAmazon/.test(txt);
+    if (!hasWizard) {
+      return "当前页面不是 STA 向导页（没有「提交装箱/创建」，也没有向导页特有文案），任务可能不存在，请核对 localTaskId";
+    }
+    return null;
+  }
+
   async function runProbe(msg) {
     if (running) return { error: "已有任务在运行" };
     running = true; stopRequested = false; userAction = null;
@@ -704,6 +738,18 @@
 
       // 前置：登录态检查（未登录会导致找不到任何 STA 按钮）
       if (!await ensureLoggedIn()) return { stopped: true };
+
+      // 动手前先随机停一下（模拟人工打开页面看两眼），避免每轮动作时间轴完全对齐
+      await jitter(J("beforeProbe") || [3000, 15000], "探测前");
+      if (stopRequested) return { stopped: true };
+
+      // 自检：页面明确提示任务不存在/无权限 → 直接报错，不再走后续点击与轮询
+      const bad = detectInvalidTask(false);
+      if (bad) {
+        dbg("任务不可用：" + bad);
+        report("任务自检", "fail", bad);
+        return { error: bad, invalidTask: true };
+      }
 
       // 判定是否需要先回上一步：
       // 页面出现「申报货件并提交配送服务」= 当前在第③步（配送服务），
@@ -718,6 +764,7 @@
         const back = [...document.querySelectorAll("button")].find(b =>
           (b.textContent || "").replace(/\s/g, "") === "上一步" && b.getBoundingClientRect().width > 0);
         if (back) {
+          await jitter(J("beforeClick") || [1000, 5000], "点「上一步」前");
           back.click();
           dbg("已点击上一步");
           report("返回装箱步骤", "ok", "已点上一步");
@@ -773,10 +820,19 @@
         }
       }
       if (pick) {
+        await jitter(J("beforeClick") || [1000, 5000], "点「" + pick.used + "」前");
         pick.btn.click();
         dbg("已点击 " + pick.used);
         report("提交装箱", "doing", "已点击「" + pick.used + "」");
       } else {
+        // 一个提交/创建/上一步按钮都没有：先做严格自检，任务不存在就直接报错，
+        // 不再挂 5 分钟等人手点（任务不存在时这 5 分钟纯属浪费，还会一直重试）
+        const badStrict = detectInvalidTask(true);
+        if (badStrict) {
+          dbg("页面自检失败：" + badStrict);
+          report("任务自检", "fail", badStrict);
+          return { error: badStrict, invalidTask: true };
+        }
         const btnTexts = dumpButtons();
         dbg("未找到提交按钮，页面可见按钮: " + JSON.stringify(btnTexts));
         setBarWithButtons("未找到提交按钮（页面按钮: " + btnTexts.slice(0, 5).join("、") + "），请手动点击后自动继续",
@@ -788,7 +844,7 @@
 
       // 处理中间确认弹窗（自动提交装箱数据等）
       for (let t = 0; t < 12; t++) {
-        await sleep(1600);
+        await jitter(J("pollConfirm") || [1200, 2600]);
         if (stopRequested) return { stopped: true };
         if (/入库配置选项/.test(document.body.innerText || "")) break;
         const confirmBtn = [...document.querySelectorAll("button")].find(x =>

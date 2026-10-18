@@ -10,7 +10,7 @@
 领星 ERP 创建 STA（亚马逊发货计划）后，亚马逊会分配入库仓库（物流中心编码，如 `中部RFD2`、`西部SCK4`）。
 用户只关心**好仓库**（成本更优的西部/部分中部仓）分配得够不够多。
 
-**核心诉求**：达标（好仓 ≥ 阈值）就提醒；不达标就每 10 分钟重新提交装箱，让亚马逊**重新分仓**，直到出好仓。
+**核心诉求**：达标（好仓 ≥ 阈值）就提醒；不达标就按**随机间隔**（默认 10–20 分钟，可在设置里改区间）重新提交装箱，让亚马逊**重新分仓**，直到出好仓。间隔随机化是为了避免固定周期被风控识别。
 
 **铁律（最高优先级）**：**绝不点击「申报货件并提交配送服务」**——那才是真实申报货件。
 插件只做到「读取仓库分配」为止，全程只读不提交。
@@ -82,8 +82,8 @@ extension/
 
 | Key | 内容 | 说明 |
 |---|---|---|
-| `lx_settings` | `{ threshold, maxAttempts, warehouses[], migrated010 }` | 用户可编辑设置；首次用 `config.js` 播种 |
-| `lx_monitor` | `{ active, localTaskId, attempts, status, tabId, lastCodes, lastDetails, lastHits, lastHitCount, lastPass, history[], log[] }` | 监控运行状态 |
+| `lx_settings` | `{ threshold, maxAttempts, warehouses[], retryMin, retryMax, migrated010 }` | 用户可编辑设置；首次用 `config.js` 播种 |
+| `lx_monitor` | `{ active, localTaskId, attempts, status, tabId, lastCodes, lastDetails, lastHits, lastHitCount, lastPass, nextProbeAt, nextDelayMin, retryRange[], history[], log[] }` | 监控运行状态；`nextProbeAt` 供面板显示下次轮询时刻 |
 | `lx_logs` | 历史运行记录（最多 200 条） | 供核查 |
 | `lx_dingtalk` | `{ webhook, secret }` | 钉钉群机器人配置 |
 | `lx_state` | 旧「自动创建STA」流程状态 | 遗留模式 |
@@ -115,6 +115,8 @@ starting → probing → waiting ─┬─→ success（达标，停止）
 
 3. content.runProbe
    a. 登录检测：页面出现「账号登录」→ 提示登录并轮询等待（最长 10 分钟）
+   a2. **拟人停顿**：随机等 3–15 秒再动手；此后每次点按钮前再随机等 1–5 秒
+       （`jitter()`，区间取自 `config.js` 的 `jitterMs`，实际停顿写进 trace）
    b. 若页面有「申报货件并提交配送服务」= 第③步 → 先点「上一步」回第②步
       （非首次探测同理；点了上一步后轮询等「提交装箱」出现，最长 10 秒）
    c. 找提交按钮：精确「提交装箱并继续」→ 模糊包含「提交装箱」→ 退而求「创建」
@@ -126,7 +128,9 @@ starting → probing → waiting ─┬─→ success（达标，停止）
 4. 编码提取 → 返回 { allCodes, details, rawText, elapsedSec, trace }
 
 5. background 判定：命中 ≥ threshold → 钉钉 + 浏览器通知 + 停止
-   否则 → 写历史、写日志、10 分钟后重试
+   否则 → 写历史、写日志、**按随机区间（默认 10–20 分钟）排下一次 alarm** 重试
+   （`scheduleRetry()` 在设置区间内取随机分钟数，保留 1 位小数不取整；
+    同时把 `nextProbeAt` 写进 `lx_monitor`，侧边栏据此显示倒计时）
 ```
 
 ---
@@ -204,6 +208,13 @@ SW 空闲 30 秒可能被回收。探测最长约 2-3 分钟，靠 **内容脚�
 | 0.6.0 | 弹窗一闪就消失 | 改用 Chrome Side Panel |
 | 0.6.1 | `Receiving end does not exist` | 插件刷新后旧页面脚本失效 → PING + 自动重新注入 |
 | 0.6.2 | 提取到假编码 `STA1` | 编码提取只扫「入库配置选项」之后的文本段 |
+| 0.1.3 | 固定 10 分钟轮询有风控风险 | 改为随机区间轮询（默认 10–20 分钟，不取整）；设置面板可改区间，两端相等即固定间隔 |
+| 0.1.4 | 间隔随机了，但动作节奏仍规整 | 增加动作级拟人随机停顿（探测前 3–15s、点击前 1–5s、弹窗轮询 1.2–2.6s、下一步前 0.8–3s）；面板新增「下次轮询时刻」预告 |
+| 0.1.5 | **串台**：随便填一个 localTaskId 也能跑，实际探测的是当前打开页面的货件 | 旧逻辑复用向导页只看「域名 + SendToAmazon」，不看 localTaskId。改为 `isTargetWizard()` 严格比对 ID；发现当前页是别的货件向导页时另开标签页（不劫持用户正在编辑的页）；动手前再加一道硬校验；`startMonitor` 增加位数校验（也支持直接粘贴整条 URL） |
+| 0.1.9 | 输入「真ID+杂字符」（如 `231749430119949312x`）仍能启动，尾部 x 被静默丢弃 | 旧逻辑用 `/\d{18,20}/` 从任意文本提取数字串再校验，等于"自动修复"了错误输入。改为严格校验：只接受 ①18–20 位纯数字 ②领星 STA 页面 URL（取 localTaskId=），其余一律拒绝并提示是否含非数字字符 |
+| 0.1.8 | 0.1.7 自查发现四处隐患 | ① 三条提前 return 路径（invalidTask/emptyRounds/stopped）漏了 `reqLogging=false`，webRequest 记录仪会一直开着；② 自检正则含「操作失败/加载失败」，正常重摇失败弹 toast 会错停整场监控——已收窄；③ 严格模式用「货件」判定向导页，但领星全局导航就有该词——改为只认向导特有词；④ RUN_PROBE 超时 360s < 手动等待 300s+提取 90s+拟人停顿，最坏会误报超时——提到 600s |
+| 0.1.7 | 任务不存在时仍会 10–20 分钟一轮地空转轮询 | 内容脚本增加 `detectInvalidTask()`：页面出现「任务不存在/已删除/无权限」或连一个 STA 按钮都没有时，直接返回 `invalidTask`；后台收到后**只通知、不重试**。另加兜底：连续 2 轮读不到任何仓库编码也停止（避免页面异常时空转） |
+| 0.1.6 | 改完仍能跑错任务 / 无法判断「改动是否生效」 | ① 位数收紧到 18–20 位（19 位为准），瞎编的长 ID 直接拒绝；② 探测**结束后**再复检一次页面 localTaskId，被 SPA 重定向就丢弃结果；③ 不匹配时**直接停止监控**而不是无限重试；④ 面板标题显示 `v0.1.6`，并显示「本轮页面任务 vs 监控任务」，串台一眼可见 |
 
 **环境坑（WorkBuddy 侧）**：沙箱会杀进程树、Chrome 自身 sandbox 初始化失败、
 `launchctl`/`open -na` 不可靠、agent-browser 的 `connect` 会话会漂移到无头实例
